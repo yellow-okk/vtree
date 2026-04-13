@@ -1,13 +1,43 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>vtree</title>
-  </head>
-  <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.js"></script>
-  </body>
+    <head>
+        <meta charset="UTF-8" />
+        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>vtree</title>
+        <style>
+            body {
+                margin: 0;
+            }
+            h1 {
+                margin: 0 0;
+            }
+            p {
+                margin: 0 0;
+            }
+            header {
+                text-align: center;
+                padding: 20px 0;
+                background-color: #cdee92;
+            }
+            footer {
+                text-align: center;
+                background-color: #edacdb;
+                padding: 12px 0;
+            }
+            #app {
+                height: 80vh;
+            }
+        </style>
+    </head>
+    <body>
+        <header>
+            <h1>vtree</h1>
+        </header>
+        <div id="app"></div>
+        <script type="module" src="/src/main.js"></script>
+        <footer>
+            <p>i am a footer</p>
+        </footer>
+    </body>
 </html>

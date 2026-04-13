@@ -291,4 +291,24 @@ export class BTree {
             this._handleUnderflow(parent);
         }
     }
+
+    traverseNode() {
+        // 遍历树节点, 输出节点列表
+        const result = [];
+
+        const preorderTraverse = (node) => {
+            if (!node) return;
+
+            result.push(node);
+
+            if (!node.leaf) {
+                for (const child of node.children) {
+                    preorderTraverse(child);
+                }
+            }
+        };
+
+        preorderTraverse(this.root);
+        return result;
+    }
 }
