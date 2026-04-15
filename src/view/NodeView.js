@@ -1,5 +1,5 @@
 import { NODE_CONFIG } from "../config.js";
-import { Container, Graphics, Application, Text, TextStyle } from "pixi.js";
+import { Container, Graphics, Text, TextStyle } from "pixi.js";
 
 export class NodeView extends Container {
     /**
@@ -14,9 +14,20 @@ export class NodeView extends Container {
         this.id = dataNodeId; // 节点ID（与数据节点ID一致）
         this.keyValues = keyValues; // 键值数组
         this.keyCount = keyValues.length; // 键值个数（正方形数量）
+        this.isHover = false; // 是否hover状态
+        this.isActive = false; // 是否当前操作节点
 
         // 视觉相关配置挂载（便于实例级自定义）
         this.config = { ...NODE_CONFIG };
+
+        // 创建TextStyle实例（只创建一次，复用）
+        this.textStyle = new TextStyle({
+            fontFamily: "Arial",
+            fontSize: this.config.fontSize,
+            fontWeight: "bold",
+            fill: this.config.borderColor,
+            align: "center",
+        });
 
         // 初始化渲染节点
         this.renderNodes();
@@ -44,6 +55,22 @@ export class NodeView extends Container {
         this.removeChildren();
         this.alpha = alpha;
 
+        if (this.isActive) {
+            this.config.fillColor = NODE_CONFIG.activeFillColor;
+            this.config.borderColor = NODE_CONFIG.activeBorderColor;
+        } else if (this.isHover) {
+            this.config.fillColor = NODE_CONFIG.hoverFillColor;
+            this.config.borderColor = NODE_CONFIG.hoverBorderColor;
+        } else {
+            this.config.fillColor = NODE_CONFIG.fillColor;
+            this.config.borderColor = NODE_CONFIG.borderColor;
+        }
+
+        // 更新TextStyle的颜色（因为hover时颜色会变化）
+        this.textStyle.fill = this.config.borderColor;
+        // 应用TextStyle的更改
+        this.textStyle.update();
+
         // 遍历键值，逐个绘制正方形和文字
         this.keyValues.forEach((key, index) => {
             // 1. 创建单个正方形
@@ -64,15 +91,8 @@ export class NodeView extends Container {
 
             this.addChild(square);
 
-            // 2. 创建数字键值文本
-            const textStyle = new TextStyle({
-                fontFamily: "Arial",
-                fontSize: this.config.fontSize,
-                fontWeight: "bold",
-                fill: this.config.borderColor,
-                align: "center",
-            });
-            const keyText = new Text({ text: key.toString(), style: textStyle });
+            // 2. 创建数字键值文本（复用TextStyle）
+            const keyText = new Text({ text: key.toString(), style: this.textStyle });
             // 文本居中（相对于当前正方形）
             keyText.anchor.set(0.5);
             keyText.x = x + this.config.squareSize / 2;
@@ -86,19 +106,39 @@ export class NodeView extends Container {
         // console.log(this.children);
     }
 
+    setPivot() {
+        this.pivot.set((this.config.squareSize * this.keyCount) / 2, this.config.squareSize / 2);
+    }
+
+    updateKeysAndRender(newKeys) {
+        this.keyValues = newKeys;
+        this.keyCount = this.keyValues.length;
+        this.setPivot();
+        this.renderNodes();
+    }
+
+    getLefttop() {
+        return { x: this.x - this.pivot.x, y: this.y - this.pivot.y };
+    }
+
+    getTopCenter() {
+        return { x: this.x, y: this.y - this.config.squareSize / 2 };
+    }
+
+    getSlotAnchor(slotIndex) {
+        const height = this.config.squareSize;
+        const anchorX = this.x + (slotIndex - this.keyCount / 2) * this.config.squareSize;
+        const anchorY = this.y + height / 2;
+        return { x: anchorX, y: anchorY };
+    }
+
     /**
      * 处理hover状态的颜色切换
      * @param {boolean} isHover - 是否处于hover状态
      */
     hover(isHover) {
         // 切换配色方案
-        if (isHover) {
-            this.config.fillColor = this.config.hoverFillColor;
-            this.config.borderColor = this.config.hoverBorderColor;
-        } else {
-            this.config.fillColor = NODE_CONFIG.fillColor;
-            this.config.borderColor = NODE_CONFIG.borderColor;
-        }
+        this.isHover = isHover;
         // 重新渲染节点
         this.renderNodes();
     }

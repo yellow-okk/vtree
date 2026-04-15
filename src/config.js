@@ -11,6 +11,8 @@ export const NODE_CONFIG = {
     // 黄色系配色（hover时使用）
     hoverFillColor: "#fff9c4", // 正方形填充色
     hoverBorderColor: "#f57f17", // 边框/文字颜色
+    activeFillColor: "#ec8a8aff", // 正方形填充色
+    activeBorderColor: "#f50c0cff", // 边框/文字颜色深红
 };
 
 export const PIXI_APP_CONFIG = {

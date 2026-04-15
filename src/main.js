@@ -30,7 +30,7 @@ function testBTreeCommands() {
     console.log("================ 开始测试 BTree 核心指令生成 ================");
 
     const bt = new BTree(3); // 3阶B树 (每个节点最多2个key，最少1个key)
-    const testKeys = [2, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 111];
+    const testKeys = [2, 10, 20];
 
     // 1. 测试插入
     console.log("\n【1. 测试插入操作】");
@@ -104,12 +104,13 @@ async function testNodeView() {
     let nodeList = bt.traverseNode();
     for (const node of nodeList) {
         let pos = positions[node.id];
-        let nodeView = new NodeView(node.keys);
-        nodeView.position.set(pos.x, pos.y);
-        viewManager.app.stage.addChild(nodeView);
+        viewManager.createNodeView(node.keys, node.id, pos.x, pos.y);
         console.log(node.id, node.keys);
     }
+    viewManager.renderEdgeOnce(bt);
 }
 (async () => {
     await testNodeView();
 })();
+
+// testBTreeCommands();
