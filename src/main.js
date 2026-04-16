@@ -2,6 +2,7 @@ import { BTree } from "./core/BTree.js";
 // import { NODE_CONFIG, PIXI_APP_CONFIG_CONFIG } from "./config.js";
 import { layoutEngine } from "./layout/LayoutEngine.js";
 import { ViewManager } from "./view/ViewManager.js";
+import BTreeController from "./controller/BTreeController.js";
 import { NodeView } from "./view/NodeView.js";
 import { Container, Graphics, Application } from "pixi.js";
 
@@ -109,8 +110,14 @@ async function testNodeView() {
     }
     viewManager.renderEdgeOnce(bt);
 }
+
+async function testController() {
+    const controller = new BTreeController();
+    controller.initInput();
+    await controller.initModules();
+}
 (async () => {
-    await testNodeView();
+    await testController();
 })();
 
 // testBTreeCommands();

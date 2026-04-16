@@ -17,7 +17,7 @@
             }
             header {
                 text-align: center;
-                padding: 20px 0;
+                padding: 10px 0;
                 background-color: #cdee92;
             }
             footer {
@@ -28,11 +28,36 @@
             #app {
                 height: 80vh;
             }
+            #controller {
+                padding: 0;
+                padding-top: 15px;
+            }
         </style>
     </head>
     <body>
         <header>
             <h1>vtree</h1>
+            <div
+                id="controller"
+                style="display: flex; align-items: center; gap: 20px; justify-content: center"
+            >
+                <div style="display: flex; align-items: center; gap: 5px">
+                    <input id="insertInput" style="width: 70px" type="number" />
+                    <button id="insertBtn">Insert</button>
+                </div>
+                <div style="display: flex; align-items: center; gap: 5px">
+                    <input id="deleteInput" type="number" style="width: 70px" />
+                    <button id="deleteBtn">delete</button>
+                </div>
+                <div style="display: flex; align-items: center; gap: 5px">
+                    <button id="clearBtn">clear</button>
+                </div>
+                <div style="display: flex; align-items: center; gap: 5px">
+                    <label id="degreeLabel">度数选择</label>
+                    <input id="degreeSlider" type="range" min="3" max="8" value="3" step="1" />
+                    <span id="degreeValue">3</span>
+                </div>
+            </div>
         </header>
         <div id="app"></div>
         <script type="module" src="/src/main.js"></script>

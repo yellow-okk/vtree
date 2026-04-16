@@ -1,4 +1,5 @@
 let _nodeIdCounter = 0;
+import { CommandTypes } from "../commands/CommandTypes.js";
 
 export class BTreeNode {
     constructor(leaf = false, order = 3) {
@@ -23,11 +24,11 @@ export class BTreeNode {
         if (this.leaf) {
             this.keys.splice(i, 0, key);
             // [指令] 向当前节点插入 key
-            this.tree._emitCmd("INSERT_KEY", { nodeId: this.id, key, index: i });
+            this.tree._emitCmd(CommandTypes.INSERT_KEY, { nodeId: this.id, key, index: i });
 
             if (this.keys.length > this.keyMax) {
                 // [指令] 当前节点溢出
-                this.tree._emitCmd("OVERFLOW", { nodeId: this.id });
+                this.tree._emitCmd(CommandTypes.OVERFLOW, { nodeId: this.id });
                 return this.split();
             }
         } else {
@@ -37,7 +38,7 @@ export class BTreeNode {
                 const [newNode, midKey] = res;
 
                 // [指令] 中间 key 飞向当前父节点
-                this.tree._emitCmd("PUSH_UP_KEY", {
+                this.tree._emitCmd(CommandTypes.PUSH_UP_KEY, {
                     key: midKey,
                     fromNodeId: this.children[i].id,
                     toNodeId: this.id,
@@ -48,11 +49,15 @@ export class BTreeNode {
                 newNode.parent = this;
 
                 // [指令] 父节点视觉上接收了 key
-                this.tree._emitCmd("INSERT_KEY", { nodeId: this.id, key: midKey, index: i });
+                this.tree._emitCmd(CommandTypes.INSERT_KEY, {
+                    nodeId: this.id,
+                    key: midKey,
+                    index: i,
+                });
 
                 if (this.keys.length > this.keyMax) {
                     // [指令] 父节点溢出
-                    this.tree._emitCmd("OVERFLOW", { nodeId: this.id });
+                    this.tree._emitCmd(CommandTypes.OVERFLOW, { nodeId: this.id });
                     return this.split();
                 }
             }
@@ -73,7 +78,7 @@ export class BTreeNode {
         const rightKeys = this.keys.slice(midIdx + 1);
 
         // [指令] 准备分裂（携带分裂后的两边 key 状态）
-        this.tree._emitCmd("SPLIT_PREPARE", {
+        this.tree._emitCmd(CommandTypes.SPLIT_PREPARE, {
             oldNodeId: this.id,
             newNodeId: newNode.id,
             leftKeys,

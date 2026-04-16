@@ -1,4 +1,5 @@
 import { BTreeNode } from "./BTreeNode.js";
+import { CommandTypes } from "../commands/CommandTypes.js";
 
 export class BTree {
     constructor(order = 3) {
@@ -45,6 +46,7 @@ export class BTree {
         if (this.root === null) {
             this.root = new BTreeNode(true, this.order);
             this.root.tree = this;
+            this._emitCmd(CommandTypes.CREATE_ROOT, { nodeId: this.root.id });
         }
         if (this.search(key)) return this.commandQueue; // 重复值不操作，返回空队列
 
@@ -74,7 +76,7 @@ export class BTree {
         }
 
         // [指令] 树长高，生成新根
-        this._emitCmd("NEW_ROOT", {
+        this._emitCmd(CommandTypes.NEW_ROOT, {
             oldRootId: oldNode.id,
             newRootId: this.root.id,
             key: value,
@@ -92,12 +94,12 @@ export class BTree {
         if (node.leaf) {
             const idx = node.keys.indexOf(key);
             // [指令] 从叶子节点移除 key
-            this._emitCmd("REMOVE_KEY", { nodeId: node.id, key });
+            this._emitCmd(CommandTypes.REMOVE_KEY, { nodeId: node.id, key });
             node.keys.splice(idx, 1);
 
             if (node.keys.length < this.minKeys) {
                 // [指令] 节点下溢
-                this._emitCmd("UNDERFLOW", { nodeId: node.id });
+                this._emitCmd(CommandTypes.UNDERFLOW, { nodeId: node.id });
                 this._handleUnderflow(node);
             }
         } else {
@@ -106,7 +108,7 @@ export class BTree {
 
         if (!this.root.keys.length && this.root.children.length) {
             // [指令] 根节点降级
-            this._emitCmd("ROOT_DEMOTION", {
+            this._emitCmd(CommandTypes.ROOT_DEMOTION, {
                 oldRootId: this.root.id,
                 newRootId: this.root.children[0].id,
             });
@@ -141,7 +143,7 @@ export class BTree {
                 : leafNode.keys[0];
 
             // [指令] 前驱/后继 key 飞过来替换
-            this._emitCmd("REPLACE_KEY", {
+            this._emitCmd(CommandTypes.REPLACE_KEY, {
                 targetNodeId: node.id,
                 oldKey: key,
                 newKey: leafKey,
@@ -152,7 +154,7 @@ export class BTree {
             isPredecessor ? leafNode.keys.pop() : leafNode.keys.shift();
 
             if (leafNode.keys.length < this.minKeys) {
-                this._emitCmd("UNDERFLOW", { nodeId: leafNode.id });
+                this._emitCmd(CommandTypes.UNDERFLOW, { nodeId: leafNode.id });
                 this._handleUnderflow(leafNode);
             }
         } else {
@@ -168,7 +170,7 @@ export class BTree {
         }
         const leafKey = leafNode.keys[leafNode.keys.length - 1];
 
-        this._emitCmd("REPLACE_KEY", {
+        this._emitCmd(CommandTypes.REPLACE_KEY, {
             targetNodeId: targetNode.id,
             oldKey: targetNode.keys[indexOfKey],
             newKey: leafKey,
@@ -177,7 +179,7 @@ export class BTree {
         targetNode.keys[indexOfKey] = leafKey;
         leafNode.keys.pop();
 
-        this._emitCmd("UNDERFLOW", { nodeId: leafNode.id });
+        this._emitCmd(CommandTypes.UNDERFLOW, { nodeId: leafNode.id });
         this._handleUnderflow(leafNode);
     }
 
@@ -202,7 +204,7 @@ export class BTree {
             const broKey = leftBroNode.keys.pop();
 
             // [指令] 借键：父键下移，兄弟键上移
-            this._emitCmd("BORROW_FROM_LEFT", {
+            this._emitCmd(CommandTypes.BORROW_FROM_LEFT, {
                 parentId: parent.id,
                 nodeId: node.id,
                 leftBroId: leftBroNode.id,
@@ -227,7 +229,7 @@ export class BTree {
             const broKey = rightBroNode.keys.shift();
 
             // [指令] 借键：父键下移，兄弟键上移
-            this._emitCmd("BORROW_FROM_RIGHT", {
+            this._emitCmd(CommandTypes.BORROW_FROM_RIGHT, {
                 parentId: parent.id,
                 nodeId: node.id,
                 rightBroId: rightBroNode.id,
@@ -251,7 +253,7 @@ export class BTree {
             const parentKey = parent.keys[indexOfNodeInParent - 1];
 
             // [指令] 与左兄弟合并，左兄弟吸收当前节点
-            this._emitCmd("MERGE_WITH_LEFT", {
+            this._emitCmd(CommandTypes.MERGE_WITH_LEFT, {
                 parentId: parent.id,
                 keepNodeId: leftBroNode.id,
                 absorbNodeId: node.id,
@@ -269,7 +271,7 @@ export class BTree {
             const parentKey = parent.keys[indexOfNodeInParent];
 
             // [指令] 与右兄弟合并，当前节点吸收右兄弟
-            this._emitCmd("MERGE_WITH_RIGHT", {
+            this._emitCmd(CommandTypes.MERGE_WITH_RIGHT, {
                 parentId: parent.id,
                 keepNodeId: node.id,
                 absorbNodeId: rightBroNode.id,
@@ -287,7 +289,7 @@ export class BTree {
 
         // 递归检查父节点
         if (parent.keys.length < this.minKeys) {
-            this._emitCmd("UNDERFLOW", { nodeId: parent.id });
+            this._emitCmd(CommandTypes.UNDERFLOW, { nodeId: parent.id });
             this._handleUnderflow(parent);
         }
     }

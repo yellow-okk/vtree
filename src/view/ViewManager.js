@@ -25,16 +25,25 @@ export class ViewManager {
         renderTreeEdge(tree, this.currentNodeViews, this.edgeGraphics, this.edgeStyle);
         this.app.stage.addChildAt(this.edgeGraphics, 0);
         console.log(this.app.stage);
-        console.log(this.edgeGraphics);
+        // console.log(this.edgeGraphics);
     }
 
-    renderAllNodeViews() {
-        this.tree.traverseNodes.map((node) => {
-            this.createNodeView(node.keyValues, node.id, node.x, node.y);
-        });
+    // renderAllNodeViews() { //错的
+    //     this.tree.traverseNodes.map((node) => {
+    //         this.createNodeView(node.keyValues, node.id, node.x, node.y);
+    //     });
+    // }
+    clearStage() {
+        console.log(this.app.stage.children.length);
+        if (this.app.stage.children.length > 1) {
+            this.app.stage.removeChildren(1);
+        } else {
+            this.app.stage.removeChildren();
+        }
     }
 
     createNodeView(keyValues, dataNodeId, x, y) {
+        console.log("创建节点视图:", keyValues, dataNodeId, x, y);
         const nodeView = new NodeView(keyValues, dataNodeId, x, y);
         nodeView.position.set(x, y);
         this.currentNodeViews.set(dataNodeId, nodeView);
@@ -66,6 +75,28 @@ export class ViewManager {
 
     syncCurrentNodeView(nodeId) {
         this.currentNodeViews.set(nodeId, this.getFutureNodeView(nodeId));
+    }
+
+    // 清空所有视图资源
+    clear() {
+        // 1. 清空Map
+        this.currentNodeViews.forEach((nodeView) => {
+            this.app.stage.removeChild(nodeView);
+        });
+        this.currentNodeViews.clear();
+
+        this.futureNodeViews.forEach((nodeView) => {
+            if (this.app.stage.contains(nodeView)) {
+                this.app.stage.removeChild(nodeView);
+            }
+        });
+        this.futureNodeViews.clear();
+
+        // 2. 清空app内容（保留app实例）
+        this.app.stage.removeChildren();
+
+        // 3. 清空edgeGraphics
+        this.edgeGraphics.clear();
     }
 
     // === 连线管理 ===
