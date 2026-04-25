@@ -101,7 +101,7 @@ export default class BTreeController {
         this.disableUI();
 
         this.animationPlayer.play(commandQueue, positions, this.bTree, 1, () => {
-            // 动画全部播完，解锁UI
+            
             this.enableUI();
         });
 
@@ -114,20 +114,20 @@ export default class BTreeController {
         const value = inputElement.value;
 
         const numberValue = parseInt(value, 10);
-        console.log("删除值:", numberValue);
+        console.log(`========删除值: ${numberValue}========`);
         // 调用删除方法，获取命令队列
         const commandQueue = this.bTree.delete(numberValue);
         console.log("Btree删除命令队列:", commandQueue);
         // 布局和渲染逻辑
         const positions = layoutEngine.calculate(this.bTree);
-        console.log("删除后的位置:", positions);
+        // console.log("删除后的位置:", positions);
 
         // 锁定UI，防止动画期间用户乱点
         this.disableUI();
 
         // 开始播放动画序列
         this.animationPlayer.play(commandQueue, positions, this.bTree, 1, () => {
-            // 动画全部播完，解锁UI
+            
             this.enableUI();
         });
 

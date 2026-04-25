@@ -15,6 +15,7 @@ export class AnimationPlayer {
         this.standardDuration = 1500;
         this.createRoot = false;
         this.tickerCallback = null;
+        this.playTimeline = null;
     }
 
     /**
@@ -103,6 +104,15 @@ export class AnimationPlayer {
      * @param {Function} onComplete 动画完成回调
      */
     play(commandQueue, finalPositions, tree, n = 0.1, onComplete) {
+        if (this.playTimeline) {
+            this.playTimeline.kill();
+            this.playTimeline = null;
+        }
+        if (this.tickerCallback) {
+            gsap.ticker.remove(this.tickerCallback);
+            this.tickerCallback = null;
+        }
+
         this.isPlaying = true;
 
         // 添加 ticker 回调，实时更新连线
@@ -111,37 +121,53 @@ export class AnimationPlayer {
         };
         gsap.ticker.add(this.tickerCallback);
 
-        let delay = 0;
         let count = 1;
-        const interval = n * (this.standardDuration / 1000); // 转换为秒
+        const interval = Math.max(n * (this.standardDuration / 1000), 0);
+        const settleDuration = this.standardDuration / 1000;
+        const adjustDuration = this.standardDuration / 2000;
 
-        // 为每个命令设置延迟执行
-        for (let cmd of commandQueue) {
-            gsap.delayedCall(delay, () => {
-                this.executeCommand(cmd, finalPositions);
-                console.log(`第${count++}条指令:`, cmd.type);
-                console.log(this.viewManager.currentNodeViews);
-            });
-            delay += interval;
-        }
-
-        // 所有命令执行完成后调整位置
-        gsap.delayedCall(delay, () => {
-            this.adjustPositions(finalPositions);
-
-            // 位置调整动画完成后移除 ticker 回调
-            setTimeout(() => {
+        this.playTimeline = gsap.timeline({
+            onComplete: () => {
                 if (this.tickerCallback) {
                     gsap.ticker.remove(this.tickerCallback);
                     this.tickerCallback = null;
                 }
                 this.isPlaying = false;
-                // 调用完成回调
+                this.playTimeline = null;
                 if (onComplete) {
                     onComplete();
                 }
-            }, this.standardDuration);
+            },
         });
+
+        if (!commandQueue.length) {
+            this.playTimeline.call(() => {
+                this.adjustPositions(finalPositions);
+            });
+            this.playTimeline.to({}, { duration: adjustDuration });
+            return;
+        }
+
+        for (let i = 0; i < commandQueue.length; i++) {
+            const cmd = commandQueue[i];
+            this.playTimeline.call(() => {
+                this.executeCommand(cmd, finalPositions);
+                console.log(`第${count++}条指令:`, cmd.type);
+                console.log(this.viewManager.currentNodeViews);
+            });
+
+            if (i < commandQueue.length - 1 && interval > 0) {
+                this.playTimeline.to({}, { duration: interval });
+            }
+        }
+
+        // 等最后一条指令自身动画稳定后，再做最终位置收敛
+        this.playTimeline
+            .to({}, { duration: settleDuration })
+            .call(() => {
+            this.adjustPositions(finalPositions);
+            })
+            .to({}, { duration: adjustDuration });
     }
 
     /**
@@ -158,11 +184,14 @@ export class AnimationPlayer {
     adjustPositions(positions) {
         const nodeViewsMap = this.viewManager.currentNodeViews;
         for (const [nodeId, view] of nodeViewsMap) {
+            if (!view.x || !view.y) continue;
             const pos = positions[nodeId];
             gsap.to(view, {
                 pixi: { x: pos.x, y: pos.y },
                 duration: this.standardDuration / 2000,
             });
+            // view.x = pos.x;
+            // view.y = pos.y;
             console.log(`调整节点${nodeId}位置到${pos.x}, ${pos.y}`);
         }
     }
@@ -171,6 +200,10 @@ export class AnimationPlayer {
      * 停止播放动画
      */
     stop() {
+        if (this.playTimeline) {
+            this.playTimeline.kill();
+            this.playTimeline = null;
+        }
         this.isPlaying = false;
         if (this.tickerCallback) {
             gsap.ticker.remove(this.tickerCallback);
@@ -183,6 +216,105 @@ export class AnimationPlayer {
      */
     clearQueue() {
         this.commandQueue = [];
+    }
+
+    getNodeKeys(node) {
+        return node && Array.isArray(node.ViewKeyValues) ? [...node.ViewKeyValues] : [];
+    }
+
+    getKeyIndex(node, key) {
+        return this.getNodeKeys(node).indexOf(key);
+    }
+
+    getNodeTargetPosition(nodeOrId, positions) {
+        if (!positions) return null;
+
+        const nodeId = typeof nodeOrId === "string" ? nodeOrId : nodeOrId?.dataNodeId;
+        return nodeId ? positions[nodeId] || null : null;
+    }
+
+    getKeyCenterAtPosition(node, index, position = null) {
+        if (!node || index < 0) {
+            return { x: 0, y: 0 };
+        }
+
+        const basePosition = position || { x: node.x, y: node.y };
+        const size = node.config.squareSize;
+        return {
+            x: basePosition.x - node.pivot.x + index * size + size / 2,
+            y: basePosition.y - node.pivot.y + size / 2,
+        };
+    }
+
+    getKeyCenter(node, index) {
+        return this.getKeyCenterAtPosition(node, index);
+    }
+
+    moveNodeToPosition(node, positions, duration = this.standardDuration / 2000) {
+        const targetPos = this.getNodeTargetPosition(node, positions);
+        if (!node || !targetPos) return null;
+
+        return gsap.to(node, {
+            pixi: { x: targetPos.x, y: targetPos.y },
+            duration,
+            ease: "power2.inOut",
+        });
+    }
+
+    addPositionTweens(timeline, nodes, positions, at = 0, duration = this.standardDuration / 2000) {
+        if (!timeline || !positions) return;
+
+        for (const node of nodes) {
+            const tween = this.moveNodeToPosition(node, positions, duration);
+            if (tween) {
+                timeline.add(tween, at);
+            }
+        }
+    }
+
+    refreshNodeKeys(node, nextKeys, positions = null) {
+        if (!node) return;
+        node.updateKeysAndRender(nextKeys);
+        this.moveNodeToPosition(node, positions, this.standardDuration / 2200);
+        const targets = node.children.filter(Boolean);
+        if (!targets.length) return;
+
+        gsap.fromTo(
+            targets,
+            {
+                pixi: { alpha: 0, scaleX: 0.85, scaleY: 0.85 },
+            },
+            {
+                pixi: { alpha: 1, scaleX: 1, scaleY: 1 },
+                duration: this.standardDuration / 2500,
+                ease: "back.out(1.2)",
+                stagger: 0.02,
+            },
+        );
+    }
+
+    createFloatingKeyText(key, startPos) {
+        const { Text } = PIXI;
+        const text = new Text({
+            text: key.toString(),
+            style: {
+                fontFamily: "Arial",
+                fontSize: 18,
+                fontWeight: "bold",
+                fill: "#6a0dad",
+            },
+        });
+        text.anchor.set(0.5);
+        text.position.set(startPos.x, startPos.y);
+        this.viewManager.app.stage.addChild(text);
+        return text;
+    }
+
+    removeFloatingDisplay(displayObject) {
+        if (displayObject && displayObject.parent) {
+            displayObject.parent.removeChild(displayObject);
+        }
+        displayObject?.destroy?.();
     }
 
     // 以下是具体命令的处理方法，暂时只定义方法框架
@@ -231,68 +363,107 @@ export class AnimationPlayer {
         }
     }
 
-    handleRemoveKey(command) {
+    handleRemoveKey(command, positions) {
         const node = this.viewManager.currentNodeViews.get(command.payload.nodeId);
-        if (!node || !node.keyValues || !Array.isArray(node.keyValues)) return;
+        if (!node) return;
 
-        const keyIndex = node.keyValues.indexOf(command.payload.key);
+        const currentKeys = this.getNodeKeys(node);
+        const keyIndex = currentKeys.indexOf(command.payload.key);
         if (keyIndex === -1) return;
 
         const item = node.getKeyItem(keyIndex);
+        const nextKeys = [...currentKeys];
+        nextKeys.splice(keyIndex, 1);
+
+        this.moveNodeToPosition(node, positions, this.standardDuration / 2200);
 
         gsap.to([item.square, item.text], {
-            pixi: { alpha: 0, scaleX: 0, scaleY: 0, y: -20 },
-            duration: this.standardDuration / 2000,
+            pixi: { alpha: 0, scaleX: 0, scaleY: 0, y: "-=16" },
+            duration: this.standardDuration / 2200,
             ease: "power2.in",
             onComplete: () => {
-                node.keyValues.splice(keyIndex, 1);
-                node.keyCount = node.keyValues.length;
-                node.setPivot();
-                node.renderNodes();
-
-                for (let i = 0; i < node.keyCount; i++) {
-                    const updatedItem = node.getKeyItem(i);
-                    gsap.from([updatedItem.square, updatedItem.text], {
-                        pixi: { alpha: 0 },
-                        duration: this.standardDuration / 2000,
-                    });
-                }
+                this.refreshNodeKeys(node, nextKeys, positions);
             },
         });
     }
 
-    handleReplaceKey(command) {
+    handleReplaceKey(command, positions) {
         const targetNode = this.viewManager.currentNodeViews.get(command.payload.targetNodeId);
         const sourceNode = this.viewManager.currentNodeViews.get(command.payload.sourceNodeId);
-        if (
-            !targetNode ||
-            !sourceNode ||
-            !targetNode.keyValues ||
-            !Array.isArray(targetNode.keyValues)
-        )
-            return;
+        if (!targetNode || !sourceNode) return;
 
-        const oldKeyIndex = targetNode.keyValues.indexOf(command.payload.oldKey);
-        if (oldKeyIndex === -1) return;
+        const targetKeys = this.getNodeKeys(targetNode);
+        const sourceKeys = this.getNodeKeys(sourceNode);
+        const oldKeyIndex = targetKeys.indexOf(command.payload.oldKey);
+        const sourceKeyIndex = sourceKeys.indexOf(command.payload.newKey);
 
-        const oldItem = targetNode.getKeyItem(oldKeyIndex);
+        if (oldKeyIndex === -1 || sourceKeyIndex === -1) return;
 
-        gsap.to([oldItem.square, oldItem.text], {
-            pixi: { alpha: 0, scaleX: 0, scaleY: 0 },
-            duration: this.standardDuration / 2000,
-            ease: "power2.in",
+        const targetItem = targetNode.getKeyItem(oldKeyIndex);
+        const sourceItem = sourceNode.getKeyItem(sourceKeyIndex);
+        const floatingKey = this.createFloatingKeyText(
+            command.payload.newKey,
+            this.getKeyCenter(sourceNode, sourceKeyIndex),
+        );
+
+        const nextTargetKeys = [...targetKeys];
+        nextTargetKeys[oldKeyIndex] = command.payload.newKey;
+
+        const nextSourceKeys = [...sourceKeys];
+        nextSourceKeys.splice(sourceKeyIndex, 1);
+
+        const targetEndCenter = this.getKeyCenterAtPosition(
+            targetNode,
+            oldKeyIndex,
+            this.getNodeTargetPosition(targetNode, positions),
+        );
+
+        const tl = gsap.timeline({
             onComplete: () => {
-                targetNode.keyValues[oldKeyIndex] = command.payload.newKey;
-                targetNode.renderNodes();
-
-                const newItem = targetNode.getKeyItem(oldKeyIndex);
-                gsap.from([newItem.square, newItem.text], {
-                    pixi: { alpha: 0, scaleX: 0, scaleY: 0 },
-                    duration: this.standardDuration / 2000,
-                    ease: "back.out",
-                });
+                this.removeFloatingDisplay(floatingKey);
+                this.refreshNodeKeys(targetNode, nextTargetKeys, positions);
+                this.refreshNodeKeys(sourceNode, nextSourceKeys, positions);
             },
         });
+
+        this.addPositionTweens(
+            tl,
+            [targetNode, sourceNode],
+            positions,
+            0,
+            this.standardDuration / 1800,
+        );
+
+        tl.to(
+            targetItem ? [targetItem.square, targetItem.text] : [],
+            {
+                pixi: { alpha: 0.2 },
+                duration: this.standardDuration / 3000,
+                ease: "power1.out",
+            },
+            0,
+        )
+            .to(
+                sourceItem ? [sourceItem.square, sourceItem.text] : [],
+                {
+                    pixi: { alpha: 0.2 },
+                    duration: this.standardDuration / 3000,
+                    ease: "power1.out",
+                },
+                0,
+            )
+            .to(
+                floatingKey,
+                {
+                    pixi: {
+                        x: targetEndCenter.x,
+                        y: targetEndCenter.y,
+                    },
+                    duration: this.standardDuration / 1800,
+                    ease: "power2.inOut",
+                },
+                0.05,
+            );
     }
 
     handleOverflow(command) {
@@ -308,14 +479,17 @@ export class AnimationPlayer {
         });
     }
 
-    handleUnderflow(command) {
+    handleUnderflow(command, positions) {
         const node = this.viewManager.currentNodeViews.get(command.payload.nodeId);
         if (!node) return;
 
-        gsap.to(node, {
-            x: "+=5",
-            duration: 50,
-            repeat: 5,
+        const tl = gsap.timeline();
+        this.addPositionTweens(tl, [node], positions, 0, this.standardDuration / 1800);
+        tl.to(node.scale, {
+            x: 1.08,
+            y: 1.08,
+            duration: this.standardDuration / 6000,
+            repeat: 3,
             yoyo: true,
             ease: "power2.inOut",
         });
@@ -423,12 +597,13 @@ export class AnimationPlayer {
         );
     }
 
-    handleRootDemotion(command) {
+    handleRootDemotion(command, positions) {
         const oldRoot = this.viewManager.currentNodeViews.get(command.payload.oldRootId);
         const newRoot = this.viewManager.currentNodeViews.get(command.payload.newRootId);
         if (!oldRoot || !newRoot) return;
 
         const tl = gsap.timeline();
+        this.addPositionTweens(tl, [newRoot], positions, 0, this.standardDuration / 1800);
         tl.to(oldRoot, {
             pixi: { alpha: 0, scaleX: 0.5, scaleY: 0.5 },
             duration: this.standardDuration / 2000,
@@ -441,202 +616,296 @@ export class AnimationPlayer {
                 ease: "power2.out",
             },
             "-=0.15",
-        );
+        ).call(() => {
+            this.viewManager.removeNodeView(command.payload.oldRootId);
+        });
     }
 
-    handleBorrowFromLeft(command) {
+    handleBorrowFromLeft(command, positions) {
         const parentNode = this.viewManager.currentNodeViews.get(command.payload.parentId);
         const node = this.viewManager.currentNodeViews.get(command.payload.nodeId);
         const leftBro = this.viewManager.currentNodeViews.get(command.payload.leftBroId);
         if (!parentNode || !node || !leftBro) return;
 
-        const { Text } = PIXI;
-        const parentKeyText = new Text({
-            text: command.payload.parentKey.toString(),
-            style: {
-                fontFamily: "Arial",
-                fontSize: 18,
-                fontWeight: "bold",
-                fill: "#6a0dad",
+        const parentKeys = this.getNodeKeys(parentNode);
+        const nodeKeys = this.getNodeKeys(node);
+        const leftKeys = this.getNodeKeys(leftBro);
+        const parentKeyIndex = parentKeys.indexOf(command.payload.parentKey);
+        const broKeyIndex = leftKeys.indexOf(command.payload.broKey);
+        if (parentKeyIndex === -1 || broKeyIndex === -1) return;
+
+        const parentKeyText = this.createFloatingKeyText(
+            command.payload.parentKey,
+            this.getKeyCenter(parentNode, parentKeyIndex),
+        );
+        const broKeyText = this.createFloatingKeyText(
+            command.payload.broKey,
+            this.getKeyCenter(leftBro, broKeyIndex),
+        );
+
+        const nextNodeKeys = [command.payload.parentKey, ...nodeKeys];
+        const nextParentKeys = [...parentKeys];
+        nextParentKeys[parentKeyIndex] = command.payload.broKey;
+        const nextLeftKeys = [...leftKeys];
+        nextLeftKeys.pop();
+        const nodeKeyCenter = this.getKeyCenterAtPosition(
+            node,
+            0,
+            this.getNodeTargetPosition(node, positions),
+        );
+        const parentKeyCenter = this.getKeyCenterAtPosition(
+            parentNode,
+            parentKeyIndex,
+            this.getNodeTargetPosition(parentNode, positions),
+        );
+
+        const tl = gsap.timeline({
+            onComplete: () => {
+                this.removeFloatingDisplay(parentKeyText);
+                this.removeFloatingDisplay(broKeyText);
+                this.refreshNodeKeys(node, nextNodeKeys, positions);
+                this.refreshNodeKeys(parentNode, nextParentKeys, positions);
+                this.refreshNodeKeys(leftBro, nextLeftKeys, positions);
             },
         });
-        parentKeyText.anchor.set(0.5);
-        parentKeyText.position.set(parentNode.x, parentNode.y + 30);
-        parentKeyText.alpha = 0;
-        this.viewManager.app.stage.addChild(parentKeyText);
 
-        const broKeyText = new Text({
-            text: command.payload.broKey.toString(),
-            style: {
-                fontFamily: "Arial",
-                fontSize: 18,
-                fontWeight: "bold",
-                fill: "#6a0dad",
-            },
-        });
-        broKeyText.anchor.set(0.5);
-        broKeyText.position.set(leftBro.x, leftBro.y - 30);
-        broKeyText.alpha = 0;
-        this.viewManager.app.stage.addChild(broKeyText);
+        this.addPositionTweens(
+            tl,
+            [node, parentNode, leftBro],
+            positions,
+            0,
+            this.standardDuration / 1800,
+        );
 
-        const tl = gsap.timeline();
         tl.to(parentKeyText, {
-            pixi: { alpha: 1, y: node.y - 30 },
-            duration: this.standardDuration / 2000,
+            pixi: {
+                x: nodeKeyCenter.x,
+                y: nodeKeyCenter.y,
+            },
+            duration: this.standardDuration / 1800,
             ease: "power2.inOut",
-        })
-            .to(
-                broKeyText,
-                {
-                    pixi: { alpha: 1, y: parentNode.y - 30 },
-                    duration: this.standardDuration / 2000,
-                    ease: "power2.inOut",
+        }).to(
+            broKeyText,
+            {
+                pixi: {
+                    x: parentKeyCenter.x,
+                    y: parentKeyCenter.y,
                 },
-                "-=0.15",
-            )
-            .call(() => {
-                this.viewManager.app.stage.removeChild(parentKeyText);
-                this.viewManager.app.stage.removeChild(broKeyText);
-            });
+                duration: this.standardDuration / 1800,
+                ease: "power2.inOut",
+            },
+            0,
+        );
     }
 
-    handleBorrowFromRight(command) {
+    handleBorrowFromRight(command, positions) {
         const parentNode = this.viewManager.currentNodeViews.get(command.payload.parentId);
         const node = this.viewManager.currentNodeViews.get(command.payload.nodeId);
         const rightBro = this.viewManager.currentNodeViews.get(command.payload.rightBroId);
         if (!parentNode || !node || !rightBro) return;
 
-        const { Text } = PIXI;
-        const parentKeyText = new Text({
-            text: command.payload.parentKey.toString(),
-            style: {
-                fontFamily: "Arial",
-                fontSize: 18,
-                fontWeight: "bold",
-                fill: "#6a0dad",
+        const parentKeys = this.getNodeKeys(parentNode);
+        const nodeKeys = this.getNodeKeys(node);
+        const rightKeys = this.getNodeKeys(rightBro);
+        const parentKeyIndex = parentKeys.indexOf(command.payload.parentKey);
+        const broKeyIndex = rightKeys.indexOf(command.payload.broKey);
+        if (parentKeyIndex === -1 || broKeyIndex === -1) return;
+
+        const parentKeyText = this.createFloatingKeyText(
+            command.payload.parentKey,
+            this.getKeyCenter(parentNode, parentKeyIndex),
+        );
+        const broKeyText = this.createFloatingKeyText(
+            command.payload.broKey,
+            this.getKeyCenter(rightBro, broKeyIndex),
+        );
+
+        const nextNodeKeys = [...nodeKeys, command.payload.parentKey];
+        const nextParentKeys = [...parentKeys];
+        nextParentKeys[parentKeyIndex] = command.payload.broKey;
+        const nextRightKeys = [...rightKeys];
+        nextRightKeys.shift();
+        const nodeKeyCenter = this.getKeyCenterAtPosition(
+            node,
+            nextNodeKeys.length - 1,
+            this.getNodeTargetPosition(node, positions),
+        );
+        const parentKeyCenter = this.getKeyCenterAtPosition(
+            parentNode,
+            parentKeyIndex,
+            this.getNodeTargetPosition(parentNode, positions),
+        );
+
+        const tl = gsap.timeline({
+            onComplete: () => {
+                this.removeFloatingDisplay(parentKeyText);
+                this.removeFloatingDisplay(broKeyText);
+                this.refreshNodeKeys(node, nextNodeKeys, positions);
+                this.refreshNodeKeys(parentNode, nextParentKeys, positions);
+                this.refreshNodeKeys(rightBro, nextRightKeys, positions);
             },
         });
-        parentKeyText.anchor.set(0.5);
-        parentKeyText.position.set(parentNode.x, parentNode.y + 30);
-        parentKeyText.alpha = 0;
-        this.viewManager.app.stage.addChild(parentKeyText);
 
-        const broKeyText = new Text({
-            text: command.payload.broKey.toString(),
-            style: {
-                fontFamily: "Arial",
-                fontSize: 18,
-                fontWeight: "bold",
-                fill: "#6a0dad",
-            },
-        });
-        broKeyText.anchor.set(0.5);
-        broKeyText.position.set(rightBro.x, rightBro.y - 30);
-        broKeyText.alpha = 0;
-        this.viewManager.app.stage.addChild(broKeyText);
+        this.addPositionTweens(
+            tl,
+            [node, parentNode, rightBro],
+            positions,
+            0,
+            this.standardDuration / 1800,
+        );
 
-        const tl = gsap.timeline();
         tl.to(parentKeyText, {
-            pixi: { alpha: 1, y: node.y - 30 },
-            duration: this.standardDuration / 2000,
+            pixi: {
+                x: nodeKeyCenter.x,
+                y: nodeKeyCenter.y,
+            },
+            duration: this.standardDuration / 1800,
             ease: "power2.inOut",
-        })
-            .to(
-                broKeyText,
-                {
-                    pixi: { alpha: 1, y: parentNode.y - 30 },
-                    duration: this.standardDuration / 2000,
-                    ease: "power2.inOut",
+        }).to(
+            broKeyText,
+            {
+                pixi: {
+                    x: parentKeyCenter.x,
+                    y: parentKeyCenter.y,
                 },
-                "-=0.15",
-            )
-            .call(() => {
-                this.viewManager.app.stage.removeChild(parentKeyText);
-                this.viewManager.app.stage.removeChild(broKeyText);
-            });
+                duration: this.standardDuration / 1800,
+                ease: "power2.inOut",
+            },
+            0,
+        );
     }
 
-    handleMergeWithLeft(command) {
+    handleMergeWithLeft(command, positions) {
         const parentNode = this.viewManager.currentNodeViews.get(command.payload.parentId);
         const keepNode = this.viewManager.currentNodeViews.get(command.payload.keepNodeId);
         const absorbNode = this.viewManager.currentNodeViews.get(command.payload.absorbNodeId);
         if (!parentNode || !keepNode || !absorbNode) return;
 
-        const { Text } = PIXI;
-        const parentKeyText = new Text({
-            text: command.payload.parentKey.toString(),
-            style: {
-                fontFamily: "Arial",
-                fontSize: 18,
-                fontWeight: "bold",
-                fill: "#6a0dad",
+        const parentKeys = this.getNodeKeys(parentNode);
+        const keepKeys = this.getNodeKeys(keepNode);
+        const absorbKeys = this.getNodeKeys(absorbNode);
+        const parentKeyIndex = parentKeys.indexOf(command.payload.parentKey);
+        if (parentKeyIndex === -1) return;
+
+        const parentKeyText = this.createFloatingKeyText(
+            command.payload.parentKey,
+            this.getKeyCenter(parentNode, parentKeyIndex),
+        );
+        const mergedKeys = [...keepKeys, command.payload.parentKey, ...absorbKeys];
+        const nextParentKeys = [...parentKeys];
+        nextParentKeys.splice(parentKeyIndex, 1);
+        const keepTargetPos = this.getNodeTargetPosition(keepNode, positions);
+        const mergedKeyCenter = this.getKeyCenterAtPosition(
+            keepNode,
+            keepKeys.length,
+            keepTargetPos,
+        );
+
+        const tl = gsap.timeline({
+            onComplete: () => {
+                this.removeFloatingDisplay(parentKeyText);
+                this.refreshNodeKeys(keepNode, mergedKeys, positions);
+                this.refreshNodeKeys(parentNode, nextParentKeys, positions);
+                this.viewManager.removeNodeView(command.payload.absorbNodeId);
             },
         });
-        parentKeyText.anchor.set(0.5);
-        parentKeyText.position.set(parentNode.x, parentNode.y + 30);
-        parentKeyText.alpha = 0;
-        this.viewManager.app.stage.addChild(parentKeyText);
 
-        const tl = gsap.timeline();
+        this.addPositionTweens(
+            tl,
+            [keepNode, parentNode],
+            positions,
+            0,
+            this.standardDuration / 1800,
+        );
+
         tl.to(parentKeyText, {
-            pixi: { alpha: 1, y: keepNode.y + 30 },
-            duration: this.standardDuration / 2000,
+            pixi: {
+                x: mergedKeyCenter.x,
+                y: mergedKeyCenter.y,
+            },
+            duration: this.standardDuration / 1800,
             ease: "power2.inOut",
-        })
-            .to(
-                absorbNode,
-                {
-                    pixi: { x: keepNode.x, y: keepNode.y, alpha: 0, scaleX: 0.5, scaleY: 0.5 },
-                    duration: this.standardDuration / 2000,
-                    ease: "power2.in",
+        }).to(
+            absorbNode,
+            {
+                pixi: {
+                    x: keepTargetPos?.x ?? keepNode.x,
+                    y: keepTargetPos?.y ?? keepNode.y,
+                    alpha: 0,
+                    scaleX: 0.7,
+                    scaleY: 0.7,
                 },
-                "-=0.2",
-            )
-            .call(() => {
-                this.viewManager.app.stage.removeChild(parentKeyText);
-                this.viewManager.removeNodeView(command.payload.absorbNodeId);
-            });
+                duration: this.standardDuration / 1800,
+                ease: "power2.in",
+            },
+            0,
+        );
     }
 
-    handleMergeWithRight(command) {
+    handleMergeWithRight(command, positions) {
         const parentNode = this.viewManager.currentNodeViews.get(command.payload.parentId);
         const keepNode = this.viewManager.currentNodeViews.get(command.payload.keepNodeId);
         const absorbNode = this.viewManager.currentNodeViews.get(command.payload.absorbNodeId);
         if (!parentNode || !keepNode || !absorbNode) return;
 
-        const { Text } = PIXI;
-        const parentKeyText = new Text({
-            text: command.payload.parentKey.toString(),
-            style: {
-                fontFamily: "Arial",
-                fontSize: 18,
-                fontWeight: "bold",
-                fill: "#6a0dad",
+        const parentKeys = this.getNodeKeys(parentNode);
+        const keepKeys = this.getNodeKeys(keepNode);
+        const absorbKeys = this.getNodeKeys(absorbNode);
+        const parentKeyIndex = parentKeys.indexOf(command.payload.parentKey);
+        if (parentKeyIndex === -1) return;
+
+        const parentKeyText = this.createFloatingKeyText(
+            command.payload.parentKey,
+            this.getKeyCenter(parentNode, parentKeyIndex),
+        );
+        const mergedKeys = [...keepKeys, command.payload.parentKey, ...absorbKeys];
+        const nextParentKeys = [...parentKeys];
+        nextParentKeys.splice(parentKeyIndex, 1);
+        const keepTargetPos = this.getNodeTargetPosition(keepNode, positions);
+        const mergedKeyCenter = this.getKeyCenterAtPosition(
+            keepNode,
+            keepKeys.length,
+            keepTargetPos,
+        );
+
+        const tl = gsap.timeline({
+            onComplete: () => {
+                this.removeFloatingDisplay(parentKeyText);
+                this.refreshNodeKeys(keepNode, mergedKeys, positions);
+                this.refreshNodeKeys(parentNode, nextParentKeys, positions);
+                this.viewManager.removeNodeView(command.payload.absorbNodeId);
             },
         });
-        parentKeyText.anchor.set(0.5);
-        parentKeyText.position.set(parentNode.x, parentNode.y + 30);
-        parentKeyText.alpha = 0;
-        this.viewManager.app.stage.addChild(parentKeyText);
 
-        const tl = gsap.timeline();
+        this.addPositionTweens(
+            tl,
+            [keepNode, parentNode],
+            positions,
+            0,
+            this.standardDuration / 1800,
+        );
+
         tl.to(parentKeyText, {
-            pixi: { alpha: 1, y: keepNode.y + 30 },
-            duration: this.standardDuration / 2000,
+            pixi: {
+                x: mergedKeyCenter.x,
+                y: mergedKeyCenter.y,
+            },
+            duration: this.standardDuration / 1800,
             ease: "power2.inOut",
-        })
-            .to(
-                absorbNode,
-                {
-                    pixi: { x: keepNode.x, y: keepNode.y, alpha: 0, scaleX: 0.5, scaleY: 0.5 },
-                    duration: this.standardDuration / 2000,
-                    ease: "power2.in",
+        }).to(
+            absorbNode,
+            {
+                pixi: {
+                    x: keepTargetPos?.x ?? keepNode.x,
+                    y: keepTargetPos?.y ?? keepNode.y,
+                    alpha: 0,
+                    scaleX: 0.7,
+                    scaleY: 0.7,
                 },
-                "-=0.2",
-            )
-            .call(() => {
-                this.viewManager.app.stage.removeChild(parentKeyText);
-                this.viewManager.removeNodeView(command.payload.absorbNodeId);
-            });
+                duration: this.standardDuration / 1800,
+                ease: "power2.in",
+            },
+            0,
+        );
     }
 }
