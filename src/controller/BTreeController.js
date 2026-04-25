@@ -4,8 +4,8 @@ import { layoutEngine } from "../layout/LayoutEngine.js";
 import { AnimationPlayer } from "../animation/AnimationPlayer.js";
 
 export default class BTreeController {
-    constructor() {
-        this.bTree = null;
+    constructor(bTree) {
+        this.bTree = bTree;
         this.degree = 3;
         this.viewManager = null;
         this.animationPlayer = null;
@@ -18,7 +18,7 @@ export default class BTreeController {
 
     async initModules() {
         //1
-        this.bTree = new BTree(this.degree);
+        // this.bTree = new BTree(this.degree);
         //2
         const appDom = document.getElementById("app");
         this.viewManager = new ViewManager(appDom);
@@ -28,14 +28,14 @@ export default class BTreeController {
         this.animationPlayer = new AnimationPlayer(this.viewManager);
     }
 
-    async initInput() {
+    initInput() {
         const degreeSlider = document.getElementById("degreeSlider");
         const degreeValue = document.getElementById("degreeValue");
 
-        degreeSlider.addEventListener("input", async (event) => {
+        degreeSlider.addEventListener("input", (event) => {
             degreeValue.textContent = event.target.value;
             this.degree = parseInt(event.target.value, 10);
-            await this.handleClear();
+            this.handleClear();
             console.log("当前阶数:", this.degree);
         });
 
@@ -74,15 +74,25 @@ export default class BTreeController {
         document.getElementById("degreeSlider").disabled = false;
     }
 
-    async handleInsert() {
+    handleInsert() {
         const inputElement = document.getElementById("insertInput");
         const value = inputElement.value;
         const numberValue = parseInt(value, 10);
 
+        const cNode = this.viewManager.currentNodeViews.get("node-1");
+        if (cNode) {
+            console.log("当前节点:", cNode);
+        } else {
+            console.log("根节点不存在");
+        }
+
         console.log(`========插入值: ${numberValue}========`);
         // 调用BTree插入方法，获取命令队列
+        // console.log("---zhi前BTree:", this.bTree);
         const commandQueue = this.bTree.insert(numberValue);
-        console.log("Btree插入命令队列:", commandQueue);
+        console.log("当前BTree:", this.bTree);
+        // console.log("Btree插入命令队列:", commandQueue);
+
         // 布局和渲染逻辑
         const positions = layoutEngine.calculate(this.bTree);
         console.log("插入后的位置:", positions);
@@ -90,8 +100,7 @@ export default class BTreeController {
         // 锁定UI，防止动画期间用户乱点
         this.disableUI();
 
-        // 开始播放动画序列
-        await this.animationPlayer.play(commandQueue, positions).then(() => {
+        this.animationPlayer.play(commandQueue, positions, this.bTree, 1, () => {
             // 动画全部播完，解锁UI
             this.enableUI();
         });
@@ -100,7 +109,7 @@ export default class BTreeController {
         inputElement.value = "";
     }
 
-    async handleDelete() {
+    handleDelete() {
         const inputElement = document.getElementById("deleteInput");
         const value = inputElement.value;
 
@@ -117,7 +126,7 @@ export default class BTreeController {
         this.disableUI();
 
         // 开始播放动画序列
-        await this.animationPlayer.play(commandQueue, positions).then(() => {
+        this.animationPlayer.play(commandQueue, positions, this.bTree, 1, () => {
             // 动画全部播完，解锁UI
             this.enableUI();
         });
@@ -125,12 +134,12 @@ export default class BTreeController {
         inputElement.value = "";
     }
 
-    async handleClear() {
+    handleClear() {
         document.getElementById("insertInput").value = "";
         document.getElementById("deleteInput").value = "";
 
         // 重置滑动条
-        // document.getElementById("degreeSlider").value = 3;
+        // document.getElementById("degreeSlider").value = "3";
         // document.getElementById("degreeValue").textContent = "3";
 
         // 清空视图资源
@@ -145,7 +154,7 @@ export default class BTreeController {
         console.log("清空所有数据");
     }
 
-    async sbInsert() {
+    sbInsert() {
         const inputElement = document.getElementById("insertInput");
         const value = inputElement.value;
 

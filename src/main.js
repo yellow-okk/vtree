@@ -4,7 +4,11 @@ import { layoutEngine } from "./layout/LayoutEngine.js";
 import { ViewManager } from "./view/ViewManager.js";
 import BTreeController from "./controller/BTreeController.js";
 import { NodeView } from "./view/NodeView.js";
-import { Container, Graphics, Application } from "pixi.js";
+import { gsap } from "gsap";
+import { PixiPlugin } from "gsap/PixiPlugin";
+import * as PIXI from "pixi.js";
+gsap.registerPlugin(PixiPlugin);
+PixiPlugin.registerPIXI(PIXI);
 
 // ==========================================
 // 辅助函数：递归打印树结构，用于验证逻辑正确性
@@ -81,10 +85,10 @@ function testBTreeCommands() {
 function testLayoutEngine() {
     console.log("================ 开始测试 LayoutEngine ================");
     const bt = new BTree(3); // 3阶B树 (每个节点最多2个key，最少1个key)
-    const testKeys = [2, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 111];
+    const testKeys = [1, 2, 3, 4];
     console.log("构建B树...");
     for (const key of testKeys) {
-        bt.insert(key);
+        const commands = bt.insert(key);
     }
     console.log("B树构建完成");
     console.log("开始布局...");
@@ -95,29 +99,59 @@ function testLayoutEngine() {
 }
 
 async function testNodeView() {
+    const bt = new BTree(3);
+    const insertBtn = document.getElementById("insertBtn");
+    insertBtn.addEventListener("click", () => {
+        const inputElement = document.getElementById("insertInput");
+        const value = inputElement.value;
+        const num = Number(value);
+        bt.insert(num);
+        console.log(bt);
+        const positions = layoutEngine.calculate(bt);
+        let nodeList = bt.traverseNode();
+        viewManager.clearStage();
+        for (const node of nodeList) {
+            let pos = positions[node.id];
+            viewManager.createNodeView(node.keys, node.id, pos.x, pos.y);
+            console.log(node.id, node.keys);
+        }
+        viewManager.renderEdgeOnce(bt);
+        inputElement.value = "";
+    });
     console.log("================ 开始测试 NodeView ================");
     const appDom = document.getElementById("app");
     const viewManager = new ViewManager(appDom);
     await viewManager.init();
-    const { positions, bt } = testLayoutEngine();
-    console.log(positions);
-    console.log(bt);
-    let nodeList = bt.traverseNode();
-    for (const node of nodeList) {
-        let pos = positions[node.id];
-        viewManager.createNodeView(node.keys, node.id, pos.x, pos.y);
-        console.log(node.id, node.keys);
-    }
-    viewManager.renderEdgeOnce(bt);
+    // const { positions, bt } = testLayoutEngine();
 }
 
+async function testNodeView2() {
+    const appDom = document.getElementById("app");
+    const vm = new ViewManager(appDom);
+    await vm.init();
+
+    let node1 = vm.createNodeView([1, 2, 3], "node1", 300, 100);
+    //等待1s
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    node1.addKeyandRender(4, 3);
+    const item = node1.getKeyItem(3);
+
+    gsap.from([item.square, item.text], {
+        pixi: { alpha: 0 },
+        duration: 1,
+    });
+}
+let bt = new BTree(3);
+window.bt = bt;
 async function testController() {
-    const controller = new BTreeController();
+    const controller = new BTreeController(bt);
     controller.initInput();
     await controller.initModules();
 }
 (async () => {
     await testController();
+    // await testNodeView();
 })();
 
 // testBTreeCommands();

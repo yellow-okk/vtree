@@ -12,8 +12,9 @@ export class AnimationPlayer {
         this.viewManager = viewManager;
         this.commandQueue = [];
         this.isPlaying = false;
-        this.standardDuration = 500;
+        this.standardDuration = 1500;
         this.createRoot = false;
+        this.tickerCallback = null;
     }
 
     /**
@@ -95,56 +96,75 @@ export class AnimationPlayer {
 
     /**
      * 开始播放动画
+     * @param {Array} commandQueue 命令队列
+     * @param {Object} finalPositions 最终位置
+     * @param {Object} tree 树结构
+     * @param {number} n 延迟倍数
+     * @param {Function} onComplete 动画完成回调
      */
-    async play(commandQueue, finalPositions) {
+    play(commandQueue, finalPositions, tree, n = 0.1, onComplete) {
         this.isPlaying = true;
 
+        // 添加 ticker 回调，实时更新连线
+        this.tickerCallback = () => {
+            this.viewManager.renderEdgeContinuously(tree);
+        };
+        gsap.ticker.add(this.tickerCallback);
+
+        let delay = 0;
+        let count = 1;
+        const interval = n * (this.standardDuration / 1000); // 转换为秒
+
+        // 为每个命令设置延迟执行
         for (let cmd of commandQueue) {
-            // 必须等待上一个指令的动画彻底播完，再执行下一个！
-            await this.executeCommand(cmd, finalPositions);
+            gsap.delayedCall(delay, () => {
+                this.executeCommand(cmd, finalPositions);
+                console.log(`第${count++}条指令:`, cmd.type);
+                console.log(this.viewManager.currentNodeViews);
+            });
+            delay += interval;
         }
 
-        this.isPlaying = false;
+        // 所有命令执行完成后调整位置
+        gsap.delayedCall(delay, () => {
+            this.adjustPositions(finalPositions);
+
+            // 位置调整动画完成后移除 ticker 回调
+            setTimeout(() => {
+                if (this.tickerCallback) {
+                    gsap.ticker.remove(this.tickerCallback);
+                    this.tickerCallback = null;
+                }
+                this.isPlaying = false;
+                // 调用完成回调
+                if (onComplete) {
+                    onComplete();
+                }
+            }, this.standardDuration);
+        });
     }
 
     /**
      * 执行单个命令
      */
     executeCommand(cmd, finalPos) {
-        return new Promise((resolve) => {
-            this.processCommand(cmd, finalPos);
-            // 这里可以根据命令类型设置不同的延迟时间
-            setTimeout(resolve, this.standardDuration / 2);
-        });
+        this.processCommand(cmd, finalPos);
+        // 移除了异步延迟，改为同步执行
     }
 
     /**
-     * 播放下一个命令（保留旧方法，确保兼容性）
+     * 调整节点位置
      */
-
-    playNextCommand(positions) {
-        if (!this.isPlaying) {
-            return;
+    adjustPositions(positions) {
+        const nodeViewsMap = this.viewManager.currentNodeViews;
+        for (const [nodeId, view] of nodeViewsMap) {
+            const pos = positions[nodeId];
+            gsap.to(view, {
+                pixi: { x: pos.x, y: pos.y },
+                duration: this.standardDuration / 2000,
+            });
+            console.log(`调整节点${nodeId}位置到${pos.x}, ${pos.y}`);
         }
-
-        const command = this.dequeueCommand();
-        if (!command) {
-            this.isPlaying = false;
-            return;
-        }
-
-        this.processCommand(command, positions);
-        // 这里可以添加动画延迟，然后继续播放下一个命令
-        setTimeout(() => this.playNextCommand(positions), this.standardDuration);
-    }
-
-    /**
-     * 开始播放动画（保留旧方法，确保兼容性）
-     */
-
-    start(positions) {
-        this.isPlaying = true;
-        this.playNextCommand(positions);
     }
 
     /**
@@ -152,6 +172,10 @@ export class AnimationPlayer {
      */
     stop() {
         this.isPlaying = false;
+        if (this.tickerCallback) {
+            gsap.ticker.remove(this.tickerCallback);
+            this.tickerCallback = null;
+        }
     }
 
     /**
@@ -163,135 +187,456 @@ export class AnimationPlayer {
 
     // 以下是具体命令的处理方法，暂时只定义方法框架
     handleCreateRoot(command) {
-        console.log("创建根节点:", command);
-        // 实现创建根节点的动画
         this.createRoot = true;
     }
     handleInsertKey(command, positions) {
-        console.log("执行命令:插入key:", command.payload, positions);
         let pos = positions[command.payload.nodeId];
-        // 实现插入key的动画
+        const currentNode = this.viewManager.currentNodeViews.get(command.payload.nodeId);
+
         if (this.createRoot) {
-            this.viewManager.createNodeView(
+            const newNode = this.viewManager.createNodeView(
                 [command.payload.key],
                 command.payload.nodeId,
                 pos.x,
                 pos.y,
             );
+            newNode.alpha = 0;
+            newNode.scale.set(0);
+            gsap.to(newNode, {
+                pixi: { alpha: 1, scaleX: 1, scaleY: 1 },
+
+                duration: this.standardDuration / 1000,
+                ease: "back.out",
+            });
             this.createRoot = false;
         } else {
-            // 非根节点插入key
-            const currentNode = this.viewManager.currentNodeViews.get(command.payload.nodeId);
-            console.log(currentNode.children);
-            const leftItems = currentNode.children.slice(0, 2 * command.payload.index);
-            const rightItems = currentNode.children.slice(2 * command.payload.index);
-            console.log(leftItems, rightItems);
+            currentNode.addKeyandRender(command.payload.key, command.payload.index);
+            const newItem = currentNode.getKeyItem(command.payload.index);
 
-            const shiftAmount = NODE_CONFIG.squareSize / 2;
-            const leftStartXs = leftItems.map((item) => item.x);
-            const rightStartXs = rightItems.map((item) => item.x);
-
-            let elapsed = 0;
-
-            const update = (ticker) => {
-                elapsed += ticker.deltaMS;
-                const progress = Math.min(elapsed / this.standardDuration, 1);
-
-                const easedProgress = progress; // 这里可以换成你的缓动函数
-
-                // 【关键步骤 2】：使用【 = 】绝对赋值，而不是【 -= 】或【 += 】
-                leftItems.forEach((item, index) => {
-                    item.x = leftStartXs[index] - shiftAmount * easedProgress;
-                });
-
-                rightItems.forEach((item, index) => {
-                    item.x = rightStartXs[index] + shiftAmount * easedProgress;
-                });
-
-                if (progress >= 1) {
-                    ticker.remove(update, this);
-                }
-            };
-            this.viewManager.app.ticker.add(update, this);
-            setTimeout(() => {
-                currentNode.keyValues.splice(command.payload.index, 0, command.payload.key);
-                currentNode.keyCount = currentNode.keyValues.length;
-                // 更新锚点为新的中心点
-                currentNode.setPivot();
-                currentNode.renderNodes(1, command.payload.index);
-                gsap.to(currentNode.children[2 * command.payload.index], {
-                    pixi: { alpha: 1 },
-                    duration: this.standardDuration / 2000,
-                });
-                gsap.to(currentNode.children[2 * command.payload.index + 1], {
-                    pixi: { alpha: 1 },
-                    duration: this.standardDuration / 2000,
-                });
-            }, this.standardDuration);
-            gsap.to(currentNode, {
-                pixi: { x: pos.x, y: pos.y },
+            gsap.from([newItem.square, newItem.text], {
+                pixi: { alpha: 0, scaleX: 0, scaleY: 0 },
                 duration: this.standardDuration / 2000,
+                ease: "back.out",
             });
+
+            for (let i = 0; i < currentNode.keyCount; i++) {
+                if (i !== command.payload.index) {
+                    const item = currentNode.getKeyItem(i);
+                    gsap.to([item.square, item.text], {
+                        pixi: { alpha: 1 },
+                        duration: this.standardDuration / 2000,
+                    });
+                }
+            }
         }
     }
 
     handleRemoveKey(command) {
-        console.log("移除key:", command);
-        // 实现移除key的动画
+        const node = this.viewManager.currentNodeViews.get(command.payload.nodeId);
+        if (!node || !node.keyValues || !Array.isArray(node.keyValues)) return;
+
+        const keyIndex = node.keyValues.indexOf(command.payload.key);
+        if (keyIndex === -1) return;
+
+        const item = node.getKeyItem(keyIndex);
+
+        gsap.to([item.square, item.text], {
+            pixi: { alpha: 0, scaleX: 0, scaleY: 0, y: -20 },
+            duration: this.standardDuration / 2000,
+            ease: "power2.in",
+            onComplete: () => {
+                node.keyValues.splice(keyIndex, 1);
+                node.keyCount = node.keyValues.length;
+                node.setPivot();
+                node.renderNodes();
+
+                for (let i = 0; i < node.keyCount; i++) {
+                    const updatedItem = node.getKeyItem(i);
+                    gsap.from([updatedItem.square, updatedItem.text], {
+                        pixi: { alpha: 0 },
+                        duration: this.standardDuration / 2000,
+                    });
+                }
+            },
+        });
     }
 
     handleReplaceKey(command) {
-        console.log("替换key:", command);
-        // 实现替换key的动画
+        const targetNode = this.viewManager.currentNodeViews.get(command.payload.targetNodeId);
+        const sourceNode = this.viewManager.currentNodeViews.get(command.payload.sourceNodeId);
+        if (
+            !targetNode ||
+            !sourceNode ||
+            !targetNode.keyValues ||
+            !Array.isArray(targetNode.keyValues)
+        )
+            return;
+
+        const oldKeyIndex = targetNode.keyValues.indexOf(command.payload.oldKey);
+        if (oldKeyIndex === -1) return;
+
+        const oldItem = targetNode.getKeyItem(oldKeyIndex);
+
+        gsap.to([oldItem.square, oldItem.text], {
+            pixi: { alpha: 0, scaleX: 0, scaleY: 0 },
+            duration: this.standardDuration / 2000,
+            ease: "power2.in",
+            onComplete: () => {
+                targetNode.keyValues[oldKeyIndex] = command.payload.newKey;
+                targetNode.renderNodes();
+
+                const newItem = targetNode.getKeyItem(oldKeyIndex);
+                gsap.from([newItem.square, newItem.text], {
+                    pixi: { alpha: 0, scaleX: 0, scaleY: 0 },
+                    duration: this.standardDuration / 2000,
+                    ease: "back.out",
+                });
+            },
+        });
     }
 
     handleOverflow(command) {
-        console.log("节点溢出:", command);
-        // 实现节点溢出的动画
+        const node = this.viewManager.currentNodeViews.get(command.payload.nodeId);
+        if (!node) return;
+
+        gsap.to(node, {
+            pixi: { scaleX: 1.1, scaleY: 1.1 },
+            duration: this.standardDuration / 4000,
+            repeat: 1,
+            yoyo: true,
+            ease: "power2.inOut",
+        });
     }
 
     handleUnderflow(command) {
-        console.log("节点下溢:", command);
-        // 实现节点下溢的动画
+        const node = this.viewManager.currentNodeViews.get(command.payload.nodeId);
+        if (!node) return;
+
+        gsap.to(node, {
+            x: "+=5",
+            duration: 50,
+            repeat: 5,
+            yoyo: true,
+            ease: "power2.inOut",
+        });
     }
 
-    handleSplitPrepare(command) {
-        console.log("准备分裂节点:", command);
-        // 实现准备分裂节点的动画
+    handleSplitPrepare(command, positions) {
+        const oldNode = this.viewManager.currentNodeViews.get(command.payload.oldNodeId);
+        const newNode = this.viewManager.createNodeView(
+            command.payload.rightKeys,
+            command.payload.newNodeId,
+            oldNode.x,
+            oldNode.y,
+        );
+
+        newNode.alpha = 0;
+        newNode.scale.set(0.5);
+
+        oldNode.updateKeysAndRender(command.payload.leftKeys);
+
+        const oldPos = positions[command.payload.oldNodeId];
+        const newPos = positions[command.payload.newNodeId];
+
+        const tl = gsap.timeline();
+        tl.to(oldNode, {
+            pixi: { x: oldPos.x, y: oldPos.y },
+            duration: this.standardDuration / 2000,
+            ease: "power2.inOut",
+        }).to(
+            newNode,
+            {
+                pixi: { alpha: 1, x: newPos.x, y: newPos.y, scaleX: 1, scaleY: 1 },
+
+                duration: this.standardDuration / 2000,
+                ease: "back.out",
+            },
+            "-=0.15",
+        );
     }
 
     handlePushUpKey(command) {
-        console.log("中间key向上推送:", command);
-        // 实现中间key向上推送的动画
+        console.log(command);
+
+        const parentNode = this.viewManager.currentNodeViews.get(command.payload.toNodeId);
+        const childNode = this.viewManager.currentNodeViews.get(command.payload.fromNodeId);
+        if (!parentNode || !childNode) return;
+
+        const { Text, Graphics } = PIXI;
+        const tempText = new Text({
+            text: command.payload.key.toString(),
+            style: {
+                fontFamily: "Arial",
+                fontSize: 18,
+                fontWeight: "bold",
+                fill: "#6a0dad",
+            },
+        });
+        tempText.anchor.set(0.5);
+
+        const startPos = { x: childNode.x, y: childNode.y - 30 };
+        const endPos = { x: parentNode.x, y: parentNode.y + 30 };
+        console.log(startPos, endPos);
+
+        tempText.position.set(startPos.x, startPos.y);
+        this.viewManager.app.stage.addChild(tempText);
+
+        gsap.to(tempText, {
+            pixi: { x: endPos.x, y: endPos.y, alpha: 1 },
+            duration: this.standardDuration / 2000,
+            ease: "power2.inOut",
+            onComplete: () => {
+                this.viewManager.app.stage.removeChild(tempText);
+            },
+        });
     }
 
-    handleNewRoot(command) {
-        console.log("生成新根节点:", command);
-        // 实现生成新根节点的动画
+    handleNewRoot(command, positions) {
+        const oldRoot = this.viewManager.currentNodeViews.get(command.payload.oldRootId);
+        const newRoot = this.viewManager.createNodeView(
+            [command.payload.key],
+            command.payload.newRootId,
+            oldRoot.x,
+            oldRoot.y,
+        );
+
+        newRoot.alpha = 0;
+        newRoot.scale.set(0);
+
+        const newPos = positions[command.payload.newRootId];
+        const oldRootNewPos = positions[command.payload.oldRootId];
+
+        const tl = gsap.timeline();
+        tl.to(newRoot, {
+            pixi: { alpha: 1, scaleX: 1, scaleY: 1 },
+
+            duration: this.standardDuration / 2000,
+            ease: "back.out",
+        }).to(
+            oldRoot,
+            {
+                pixi: { x: oldRootNewPos.x, y: oldRootNewPos.y },
+                duration: this.standardDuration / 2000,
+                ease: "power2.inOut",
+            },
+            "-=0.2",
+        );
     }
 
     handleRootDemotion(command) {
-        console.log("根节点降级:", command);
-        // 实现根节点降级的动画
+        const oldRoot = this.viewManager.currentNodeViews.get(command.payload.oldRootId);
+        const newRoot = this.viewManager.currentNodeViews.get(command.payload.newRootId);
+        if (!oldRoot || !newRoot) return;
+
+        const tl = gsap.timeline();
+        tl.to(oldRoot, {
+            pixi: { alpha: 0, scaleX: 0.5, scaleY: 0.5 },
+            duration: this.standardDuration / 2000,
+            ease: "power2.in",
+        }).to(
+            newRoot,
+            {
+                pixi: { alpha: 1 },
+                duration: this.standardDuration / 2000,
+                ease: "power2.out",
+            },
+            "-=0.15",
+        );
     }
 
     handleBorrowFromLeft(command) {
-        console.log("向左兄弟借key:", command);
-        // 实现向左兄弟借key的动画
+        const parentNode = this.viewManager.currentNodeViews.get(command.payload.parentId);
+        const node = this.viewManager.currentNodeViews.get(command.payload.nodeId);
+        const leftBro = this.viewManager.currentNodeViews.get(command.payload.leftBroId);
+        if (!parentNode || !node || !leftBro) return;
+
+        const { Text } = PIXI;
+        const parentKeyText = new Text({
+            text: command.payload.parentKey.toString(),
+            style: {
+                fontFamily: "Arial",
+                fontSize: 18,
+                fontWeight: "bold",
+                fill: "#6a0dad",
+            },
+        });
+        parentKeyText.anchor.set(0.5);
+        parentKeyText.position.set(parentNode.x, parentNode.y + 30);
+        parentKeyText.alpha = 0;
+        this.viewManager.app.stage.addChild(parentKeyText);
+
+        const broKeyText = new Text({
+            text: command.payload.broKey.toString(),
+            style: {
+                fontFamily: "Arial",
+                fontSize: 18,
+                fontWeight: "bold",
+                fill: "#6a0dad",
+            },
+        });
+        broKeyText.anchor.set(0.5);
+        broKeyText.position.set(leftBro.x, leftBro.y - 30);
+        broKeyText.alpha = 0;
+        this.viewManager.app.stage.addChild(broKeyText);
+
+        const tl = gsap.timeline();
+        tl.to(parentKeyText, {
+            pixi: { alpha: 1, y: node.y - 30 },
+            duration: this.standardDuration / 2000,
+            ease: "power2.inOut",
+        })
+            .to(
+                broKeyText,
+                {
+                    pixi: { alpha: 1, y: parentNode.y - 30 },
+                    duration: this.standardDuration / 2000,
+                    ease: "power2.inOut",
+                },
+                "-=0.15",
+            )
+            .call(() => {
+                this.viewManager.app.stage.removeChild(parentKeyText);
+                this.viewManager.app.stage.removeChild(broKeyText);
+            });
     }
 
     handleBorrowFromRight(command) {
-        console.log("向右兄弟借key:", command);
-        // 实现向右兄弟借key的动画
+        const parentNode = this.viewManager.currentNodeViews.get(command.payload.parentId);
+        const node = this.viewManager.currentNodeViews.get(command.payload.nodeId);
+        const rightBro = this.viewManager.currentNodeViews.get(command.payload.rightBroId);
+        if (!parentNode || !node || !rightBro) return;
+
+        const { Text } = PIXI;
+        const parentKeyText = new Text({
+            text: command.payload.parentKey.toString(),
+            style: {
+                fontFamily: "Arial",
+                fontSize: 18,
+                fontWeight: "bold",
+                fill: "#6a0dad",
+            },
+        });
+        parentKeyText.anchor.set(0.5);
+        parentKeyText.position.set(parentNode.x, parentNode.y + 30);
+        parentKeyText.alpha = 0;
+        this.viewManager.app.stage.addChild(parentKeyText);
+
+        const broKeyText = new Text({
+            text: command.payload.broKey.toString(),
+            style: {
+                fontFamily: "Arial",
+                fontSize: 18,
+                fontWeight: "bold",
+                fill: "#6a0dad",
+            },
+        });
+        broKeyText.anchor.set(0.5);
+        broKeyText.position.set(rightBro.x, rightBro.y - 30);
+        broKeyText.alpha = 0;
+        this.viewManager.app.stage.addChild(broKeyText);
+
+        const tl = gsap.timeline();
+        tl.to(parentKeyText, {
+            pixi: { alpha: 1, y: node.y - 30 },
+            duration: this.standardDuration / 2000,
+            ease: "power2.inOut",
+        })
+            .to(
+                broKeyText,
+                {
+                    pixi: { alpha: 1, y: parentNode.y - 30 },
+                    duration: this.standardDuration / 2000,
+                    ease: "power2.inOut",
+                },
+                "-=0.15",
+            )
+            .call(() => {
+                this.viewManager.app.stage.removeChild(parentKeyText);
+                this.viewManager.app.stage.removeChild(broKeyText);
+            });
     }
 
     handleMergeWithLeft(command) {
-        console.log("与左兄弟合并:", command);
-        // 实现与左兄弟合并的动画
+        const parentNode = this.viewManager.currentNodeViews.get(command.payload.parentId);
+        const keepNode = this.viewManager.currentNodeViews.get(command.payload.keepNodeId);
+        const absorbNode = this.viewManager.currentNodeViews.get(command.payload.absorbNodeId);
+        if (!parentNode || !keepNode || !absorbNode) return;
+
+        const { Text } = PIXI;
+        const parentKeyText = new Text({
+            text: command.payload.parentKey.toString(),
+            style: {
+                fontFamily: "Arial",
+                fontSize: 18,
+                fontWeight: "bold",
+                fill: "#6a0dad",
+            },
+        });
+        parentKeyText.anchor.set(0.5);
+        parentKeyText.position.set(parentNode.x, parentNode.y + 30);
+        parentKeyText.alpha = 0;
+        this.viewManager.app.stage.addChild(parentKeyText);
+
+        const tl = gsap.timeline();
+        tl.to(parentKeyText, {
+            pixi: { alpha: 1, y: keepNode.y + 30 },
+            duration: this.standardDuration / 2000,
+            ease: "power2.inOut",
+        })
+            .to(
+                absorbNode,
+                {
+                    pixi: { x: keepNode.x, y: keepNode.y, alpha: 0, scaleX: 0.5, scaleY: 0.5 },
+                    duration: this.standardDuration / 2000,
+                    ease: "power2.in",
+                },
+                "-=0.2",
+            )
+            .call(() => {
+                this.viewManager.app.stage.removeChild(parentKeyText);
+                this.viewManager.removeNodeView(command.payload.absorbNodeId);
+            });
     }
 
     handleMergeWithRight(command) {
-        console.log("与右兄弟合并:", command);
-        // 实现与右兄弟合并的动画
+        const parentNode = this.viewManager.currentNodeViews.get(command.payload.parentId);
+        const keepNode = this.viewManager.currentNodeViews.get(command.payload.keepNodeId);
+        const absorbNode = this.viewManager.currentNodeViews.get(command.payload.absorbNodeId);
+        if (!parentNode || !keepNode || !absorbNode) return;
+
+        const { Text } = PIXI;
+        const parentKeyText = new Text({
+            text: command.payload.parentKey.toString(),
+            style: {
+                fontFamily: "Arial",
+                fontSize: 18,
+                fontWeight: "bold",
+                fill: "#6a0dad",
+            },
+        });
+        parentKeyText.anchor.set(0.5);
+        parentKeyText.position.set(parentNode.x, parentNode.y + 30);
+        parentKeyText.alpha = 0;
+        this.viewManager.app.stage.addChild(parentKeyText);
+
+        const tl = gsap.timeline();
+        tl.to(parentKeyText, {
+            pixi: { alpha: 1, y: keepNode.y + 30 },
+            duration: this.standardDuration / 2000,
+            ease: "power2.inOut",
+        })
+            .to(
+                absorbNode,
+                {
+                    pixi: { x: keepNode.x, y: keepNode.y, alpha: 0, scaleX: 0.5, scaleY: 0.5 },
+                    duration: this.standardDuration / 2000,
+                    ease: "power2.in",
+                },
+                "-=0.2",
+            )
+            .call(() => {
+                this.viewManager.app.stage.removeChild(parentKeyText);
+                this.viewManager.removeNodeView(command.payload.absorbNodeId);
+            });
     }
 }

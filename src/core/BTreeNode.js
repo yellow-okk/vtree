@@ -16,6 +16,7 @@ export class BTreeNode {
     }
 
     insertNode(key) {
+        console.log(`&&&&BTreeNode插入值: ${key} of`);
         let i = 0;
         while (i < this.keys.length && key > this.keys[i]) {
             i++;

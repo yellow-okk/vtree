@@ -41,6 +41,7 @@ export class BTree {
     // 插入 (返回指令队列)
     // -------------------------------------------------------
     insert(key) {
+        console.log(`&&&&BTree插入值: ${key}`);
         this._clearCmds(); // 每次新操作前清空队列
 
         if (this.root === null) {

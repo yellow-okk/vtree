@@ -19,6 +19,7 @@ export class ViewManager {
     async init() {
         await this.app.init(PIXI_APP_CONFIG);
         this.targetDom.appendChild(this.app.canvas);
+        this.app.stage.addChildAt(this.edgeGraphics, 0);
     }
 
     renderEdgeOnce(tree) {
@@ -26,6 +27,11 @@ export class ViewManager {
         this.app.stage.addChildAt(this.edgeGraphics, 0);
         console.log(this.app.stage);
         // console.log(this.edgeGraphics);
+    }
+
+    renderEdgeContinuously(tree) {
+        // 直接更新连线，不需要重复添加到舞台
+        renderTreeEdge(tree, this.currentNodeViews, this.edgeGraphics, this.edgeStyle);
     }
 
     // renderAllNodeViews() { //错的

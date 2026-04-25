@@ -4,16 +4,16 @@ import { Container, Graphics, Text, TextStyle } from "pixi.js";
 export class NodeView extends Container {
     /**
      * 构造函数
-     * @param {number[]} keyValues - 数字键值数组（必传）
+     * @param {number[]} ViewKeyValues - 数字键值数组（必传）
      * @param {NodeView|null} parent - 父节点引用（可选，默认null）
      */
-    constructor(keyValues, dataNodeId) {
+    constructor(ViewKeyValues, dataNodeId) {
         super();
         // 数据结构属性初始化
         this.dataNodeId = dataNodeId; // 数据节点ID
         this.id = dataNodeId; // 节点ID（与数据节点ID一致）
-        this.keyValues = keyValues; // 键值数组
-        this.keyCount = keyValues.length; // 键值个数（正方形数量）
+        this.ViewKeyValues = [...ViewKeyValues]; // 键值数组（复制）
+        this.keyCount = ViewKeyValues.length; // 键值个数（正方形数量）
         this.isHover = false; // 是否hover状态
         this.isActive = false; // 是否当前操作节点
 
@@ -72,7 +72,7 @@ export class NodeView extends Container {
         this.textStyle.update();
 
         // 遍历键值，逐个绘制正方形和文字
-        this.keyValues.forEach((key, index) => {
+        this.ViewKeyValues.forEach((key, index) => {
             // 1. 创建单个正方形
             const square = new Graphics();
             // 计算当前正方形的x坐标（无间距横向排列）
@@ -111,8 +111,15 @@ export class NodeView extends Container {
     }
 
     updateKeysAndRender(newKeys) {
-        this.keyValues = newKeys;
-        this.keyCount = this.keyValues.length;
+        this.ViewKeyValues = [...newKeys];
+        this.keyCount = this.ViewKeyValues.length;
+        this.setPivot();
+        this.renderNodes();
+    }
+
+    addKeyandRender(key, index) {
+        this.ViewKeyValues.splice(index, 0, key);
+        this.keyCount = this.ViewKeyValues.length;
         this.setPivot();
         this.renderNodes();
     }
@@ -130,6 +137,10 @@ export class NodeView extends Container {
         const anchorX = this.x + (slotIndex - this.keyCount / 2) * this.config.squareSize;
         const anchorY = this.y + height / 2;
         return { x: anchorX, y: anchorY };
+    }
+
+    getKeyItem(index) {
+        return { square: this.children[index * 2], text: this.children[index * 2 + 1] };
     }
 
     /**
